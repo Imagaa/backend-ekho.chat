@@ -13,6 +13,11 @@ class WebhookController extends Controller
      */
     public function handle(Request $request)
     {
+        // 0. Cegah Payload Raksasa (Maksimal 1MB)
+        if (strlen($request->getContent()) > 1048576) {
+            return response()->json(['error' => 'Payload too large'], 413);
+        }
+
         // 1. Verifikasi Token (Keamanan Dasar)
         $token = $request->query('verify_token') ?? $request->header('X-Verify-Token');
         
@@ -23,10 +28,9 @@ class WebhookController extends Controller
         $payload = $request->all();
 
         // 2. Lempar ke Redis secepat mungkin (Non-blocking)
-        // Disetel ke queue 'webhook' agar dieksekusi dengan prioritas tertinggi oleh worker
-        ProcessWebhook::dispatch($payload)->onQueue('webhook');
+        \App\Jobs\ProcessWebhook::dispatch($payload)->onQueue('webhook');
 
-        // 3. Return 200 OK langsung agar Meta/api.co.id tidak melakukan retry pengiriman webhook
+        // 3. Return 200 OK langsung
         return response()->json(['status' => 'received'], 200);
     }
 }

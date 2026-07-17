@@ -8,13 +8,16 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\MidtransController;
 use App\Http\Controllers\Api\WebhookController;
 
-// --- PUBLIC ROUTES ---
-Route::post('/login', [AuthController::class, 'login']);
-Route::post('/webhook/midtrans', [MidtransController::class, 'webhook']);
-Route::post('/webhook/waba', [WebhookController::class, 'handle']);
+// --- PUBLIC ROUTES (Dilindungi Webhook & Login Shield) ---
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
-// --- PROTECTED ROUTES (SANCTUM) ---
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('throttle:webhook')->group(function () {
+    Route::post('/webhook/midtrans', [MidtransController::class, 'webhook']);
+    Route::post('/webhook/waba', [WebhookController::class, 'handle']);
+});
+
+// --- PROTECTED ROUTES (Dilindungi Token-Based API Shield) ---
+Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/topup', [MidtransController::class, 'createTransaction']);
