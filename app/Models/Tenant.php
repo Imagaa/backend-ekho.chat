@@ -11,6 +11,11 @@ class Tenant extends Model
 
     protected $fillable = ['company_name', 'waba_api_key', 'waba_endpoint', 'waba_phone_id'];
 
+    // Fase 1: Enkripsi Kredensial Meta
+    protected $casts = [
+        'waba_api_key' => 'encrypted',
+    ];
+
     public function users()
     {
         return $this->hasMany(User::class);

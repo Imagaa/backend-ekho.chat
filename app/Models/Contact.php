@@ -13,7 +13,7 @@ class Contact extends Model
     protected $fillable = ['tenant_id', 'contact_group_id', 'name', 'phone', 'dynamic_data'];
 
     protected $casts = [
-        'dynamic_data' => 'array',
+        'dynamic_data' => 'encrypted:array',
     ];
 
     public function group()
