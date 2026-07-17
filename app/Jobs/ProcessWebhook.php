@@ -27,37 +27,54 @@ class ProcessWebhook implements ShouldQueue
     public function handle(): void
     {
         try {
-            // Asumsi struktur payload dari api.co.id (sesuaikan dengan dokumentasi provider)
             $entry = $this->payload['entry'][0]['changes'][0]['value'] ?? null;
+            if (!$entry) return;
 
-            if (!$entry || !isset($entry['statuses'])) {
-                return; // Bukan webhook status pesan, abaikan.
+            // --- 1. HANDLING STATUS DLR (Delivery Receipts) ---
+            if (isset($entry['statuses'])) {
+                $statusData = $entry['statuses'][0];
+                $messageIdMeta = $statusData['id'];
+                $status = strtoupper($statusData['status']);
+                $errorReason = ($status === 'FAILED' && isset($statusData['errors'])) 
+                                ? $statusData['errors'][0]['title'] 
+                                : null;
+
+                $log = MessageLog::where('message_id_meta', $messageIdMeta)->first();
+                if ($log) {
+                    $log->update(['status' => $status, 'error_reason' => $errorReason]);
+                }
             }
 
-            $statusData = $entry['statuses'][0];
-            $messageIdMeta = $statusData['id'];
-            $status = strtoupper($statusData['status']); // SENT, DELIVERED, READ, FAILED
-            $errorReason = null;
+            // --- 2. HANDLING INBOUND CHAT (Pesan Masuk dari Customer) ---
+            if (isset($entry['messages'])) {
+                $messageData = $entry['messages'][0];
+                $contactData = $entry['contacts'][0] ?? null;
+                
+                // Cari nomor telepon customer dari payload WABA
+                $customerPhone = $contactData['wa_id'] ?? $messageData['from'] ?? null;
+                $metadata = $entry['metadata'];
+                
+                // Cari Tenant berdasarkan waba_phone_id
+                $tenant = \App\Models\Tenant::where('waba_phone_id', $metadata['phone_number_id'])->first();
 
-            if ($status === 'FAILED' && isset($statusData['errors'])) {
-                $errorReason = $statusData['errors'][0]['title'] ?? 'Unknown Error';
-            }
+                if ($tenant && $customerPhone && isset($messageData['text']['body'])) {
+                    
+                    // Simpan Chat ke Database
+                    $chat = \App\Models\Chat::create([
+                        'tenant_id' => $tenant->id,
+                        'customer_phone' => $customerPhone,
+                        'message' => $messageData['text']['body'],
+                        'direction' => 'inbound',
+                        'message_id_meta' => $messageData['id'],
+                    ]);
 
-            // Cari log pesan berdasarkan ID Meta
-            $log = MessageLog::where('message_id_meta', $messageIdMeta)->first();
-
-            if ($log) {
-                $log->update([
-                    'status' => $status,
-                    'error_reason' => $errorReason
-                ]);
+                    // Broadcast ke Laravel Reverb untuk realtime frontend
+                    broadcast(new \App\Events\ChatReceived($chat))->toOthers();
+                }
             }
 
         } catch (\Exception $e) {
-            // Catat error fatal di storage/logs/laravel.log tanpa mematikan worker
-            Log::error('Webhook Processing Error: ' . $e->getMessage());
-            
-            // Lempar kembali exception agar Job terhitung gagal dan masuk ke antrean retry
+            \Illuminate\Support\Facades\Log::error('Webhook Error: ' . $e->getMessage());
             throw $e;
         }
     }
