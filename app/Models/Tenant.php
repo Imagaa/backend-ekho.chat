@@ -3,8 +3,21 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class Tenant extends Model
 {
-    //
+    use HasFactory;
+
+    protected $fillable = ['company_name', 'waba_api_key', 'waba_endpoint', 'waba_phone_id'];
+
+    public function users()
+    {
+        return $this->hasMany(User::class);
+    }
+
+    public function wallet()
+    {
+        return $this->hasOne(Wallet::class);
+    }
 }
