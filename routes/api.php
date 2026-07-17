@@ -3,16 +3,22 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\ContactController;
+use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\MidtransController;
+use App\Http\Controllers\Api\WebhookController;
 
-Route::get('/user', function (Request $request) {
-    return $request->user();
-})->middleware('auth:sanctum');
+// --- PUBLIC ROUTES ---
+Route::post('/login', [AuthController::class, 'login']);
+Route::post('/webhook/midtrans', [MidtransController::class, 'webhook']);
+Route::post('/webhook/waba', [WebhookController::class, 'handle']);
 
-// Webhook Publik (Tanpa Sanctum Auth)
-Route::post('/webhook/waba', [\App\Http\Controllers\Api\WebhookController::class, 'handle']);
-
-// Menggunakan Sanctum middleware untuk otentikasi API
+// --- PROTECTED ROUTES (SANCTUM) ---
 Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/dashboard', [App\Http\Controllers\Api\DashboardController::class, 'index']);
-    Route::post('/contacts/import', [App\Http\Controllers\Api\ContactController::class, 'import']);
+    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/me', [AuthController::class, 'me']);
+    Route::post('/topup', [MidtransController::class, 'createTransaction']);
+    
+    Route::get('/dashboard', [DashboardController::class, 'index']);
+    Route::post('/contacts/import', [ContactController::class, 'import']);
 });
