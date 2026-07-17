@@ -13,5 +13,6 @@ Route::post('/webhook/waba', [\App\Http\Controllers\Api\WebhookController::class
 
 // Menggunakan Sanctum middleware untuk otentikasi API
 Route::middleware('auth:sanctum')->group(function () {
-    Route::post('/contacts/import', [ContactController::class, 'import']);
+    Route::get('/dashboard', [App\Http\Controllers\Api\DashboardController::class, 'index']);
+    Route::post('/contacts/import', [App\Http\Controllers\Api\ContactController::class, 'import']);
 });
