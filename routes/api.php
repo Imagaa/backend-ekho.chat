@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\MidtransController;
 use App\Http\Controllers\Api\WebhookController;
 
 // --- PUBLIC ROUTES (Dilindungi Webhook & Login Shield) ---
+Route::post('/request-otp', [AuthController::class, 'requestOtp'])->middleware('throttle:login');
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
 Route::middleware('throttle:webhook')->group(function () {

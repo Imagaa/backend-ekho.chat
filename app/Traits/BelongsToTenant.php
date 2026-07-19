@@ -18,8 +18,10 @@ trait BelongsToTenant
     protected static function bootBelongsToTenant()
     {
         static::addGlobalScope('tenant', function (Builder $builder) {
-            if (Auth::check() && Auth::user()->tenant_id) {
-                $builder->where('tenant_id', Auth::user()->tenant_id);
+            if (Auth::check()) {
+                // Menambahkan perlindungan: jika user tidak punya tenant_id, paksa query kosong/gagal
+                $tenantId = Auth::user()->tenant_id;
+                $builder->where('tenant_id', $tenantId ?? 0); 
             }
         });
 
