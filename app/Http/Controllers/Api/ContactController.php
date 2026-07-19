@@ -13,9 +13,10 @@ class ContactController extends Controller
 {
     public function import(Request $request)
     {
+        // Validasi mutlak: Hanya menerima spreadsheet murni, maksimal 10MB (Anti-RCE & Cegah Memory Dump)
         $request->validate([
             'contact_group_id' => 'required|exists:contact_groups,id',
-            'file' => 'required|mimes:csv,xlsx,xls|max:10240', // Max 10MB
+            'file' => 'required|file|mimes:xlsx,xls,csv|max:10240',
         ]);
 
         // Global scope tenant otomatis memastikan group ini milik user yang login

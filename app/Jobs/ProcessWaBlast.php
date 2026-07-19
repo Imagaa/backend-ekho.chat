@@ -20,10 +20,11 @@ class ProcessWaBlast implements ShouldQueue
     public $log;
     public $dynamicData;
 
-    /**
-     * Jumlah retry jika job gagal (misal API Meta timeout)
-     */
+    // Batasi maksimal 3 kali percobaan jika API Meta/Provider down
     public $tries = 3;
+    
+    // Jeda antar percobaan (10 detik, 30 detik, lalu 60 detik) untuk memberi waktu server pulih
+    public $backoff = [10, 30, 60];
 
     public function __construct(MessageLog $log, array $dynamicData = [])
     {

@@ -48,7 +48,8 @@ class MidtransController extends Controller
         $serverKey = env('MIDTRANS_SERVER_KEY');
         $hashedKey = hash("sha512", $request->order_id . $request->status_code . $request->gross_amount . $serverKey);
         
-        if ($hashedKey !== $request->signature_key) {
+        // Mencegah Timing Attack menggunakan komparasi kriptografis mutlak
+        if (!hash_equals((string) $hashedKey, (string) $request->signature_key)) {
             return response()->json(['message' => 'Invalid signature'], 403);
         }
 
