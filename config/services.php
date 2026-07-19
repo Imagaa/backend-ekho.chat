@@ -2,24 +2,24 @@
 
 return [
 
-    /*
-    |--------------------------------------------------------------------------
-    | Third Party Services
-    |--------------------------------------------------------------------------
-    |
-    | This file is for storing the credentials for third party services such
-    | as Mailgun, Postmark, AWS and more. This file provides the de facto
-    | location for this type of information, allowing packages to have
-    | a conventional file to locate the various service credentials.
-    |
-    */
-
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],
 
     'resend' => [
         'key' => env('RESEND_API_KEY'),
+    ],
+
+    // --- Tambahan Patch Keamanan: Meta WABA & Midtrans ---
+    'waba' => [
+        'verify_token' => env('WABA_WEBHOOK_VERIFY_TOKEN'),
+        'app_secret' => env('WABA_APP_SECRET'), // Disiapkan untuk Patch 2 (HMAC)
+    ],
+
+    'midtrans' => [
+        'server_key' => env('MIDTRANS_SERVER_KEY'),
+        'client_key' => env('MIDTRANS_CLIENT_KEY'),
+        'is_production' => env('MIDTRANS_IS_PRODUCTION', false),
     ],
 
     'ses' => [

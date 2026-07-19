@@ -18,11 +18,20 @@ class WebhookController extends Controller
             return response()->json(['error' => 'Payload too large'], 413);
         }
 
-        // 1. Verifikasi Token (Keamanan Dasar)
-        $token = $request->query('verify_token') ?? $request->header('X-Verify-Token');
+        // 1. Verifikasi HMAC-SHA256 (Standar Meta/WABA)
+        // Dapatkan signature dari header (biasanya X-Hub-Signature-256)
+        $signature = $request->header('X-Hub-Signature-256');
         
-        if ($token !== env('WABA_WEBHOOK_VERIFY_TOKEN')) {
-            return response()->json(['error' => 'Unauthorized'], 401);
+        if (!$signature) {
+             return response()->json(['error' => 'Signature missing'], 401);
+        }
+
+        // Buat hash dari raw content dengan app_secret
+        $computedSignature = hash_hmac('sha256', $request->getContent(), config('services.waba.app_secret'));
+
+        // Gunakan hash_equals untuk keamanan timing attack
+        if (!hash_equals('sha256=' . $computedSignature, $signature)) {
+            return response()->json(['error' => 'Invalid signature'], 401);
         }
 
         $payload = $request->all();

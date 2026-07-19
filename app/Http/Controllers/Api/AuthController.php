@@ -33,7 +33,7 @@ class AuthController extends Controller
 
         // Tembak ke API Resend
         Http::withHeaders([
-            'Authorization' => 'Bearer ' . env('RESEND_API_KEY'),
+            'Authorization' => 'Bearer ' . config('services.resend.key'),
             'Content-Type' => 'application/json'
         ])->post('https://api.resend.com/emails', [
             'from' => 'auth@ekho.imaga.site', // Pastikan domain ini sudah di-verify di dashboard Resend

@@ -17,8 +17,8 @@ class MidtransController extends Controller
         $tenant = $request->user()->tenant;
         $orderId = 'TOPUP-' . $tenant->id . '-' . time();
 
-        $serverKey = env('MIDTRANS_SERVER_KEY');
-        $baseUrl = env('MIDTRANS_IS_PRODUCTION', false) 
+        $serverKey = config('services.midtrans.server_key');
+        $baseUrl = config('services.midtrans.is_production', false) 
             ? 'https://app.midtrans.com/snap/v1/transactions' 
             : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
 
@@ -45,7 +45,7 @@ class MidtransController extends Controller
 
     public function webhook(Request $request)
     {
-        $serverKey = env('MIDTRANS_SERVER_KEY');
+        $serverKey = config('services.midtrans.server_key');
         $hashedKey = hash("sha512", $request->order_id . $request->status_code . $request->gross_amount . $serverKey);
         
         // Mencegah Timing Attack menggunakan komparasi kriptografis mutlak
