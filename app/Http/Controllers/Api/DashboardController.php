@@ -12,11 +12,11 @@ class DashboardController extends Controller
     {
         $tenant = Auth::user()->tenant;
         
-        // Ambil data 30 hari terakhir
-        $stats = DailyMessageStat::where('date', '>=', now()->subDays(30))
+        // Ambil data 30 hari terakhir (fix dengan menambahkan tenant id agar murni milik user masing masing)
+        $stats = DailyMessageStat::where('tenant_id', $tenant->id)  // tambahkan ini
+                    ->where('date', '>=', now()->subDays(30))
                     ->orderBy('date', 'asc')
                     ->get();
-
         $totalSent = $stats->sum('total_sent');
         $totalDelivered = $stats->sum('total_delivered');
         $totalRead = $stats->sum('total_read');
