@@ -59,17 +59,23 @@ class ProcessWebhook implements ShouldQueue
 
                 if ($tenant && $customerPhone && isset($messageData['text']['body'])) {
                     
-                    // Simpan Chat ke Database
-                    $chat = \App\Models\Chat::create([
-                        'tenant_id' => $tenant->id,
-                        'customer_phone' => $customerPhone,
-                        'message' => $messageData['text']['body'],
-                        'direction' => 'inbound',
-                        'message_id_meta' => $messageData['id'],
-                    ]);
+                    // Patch 3B: firstOrCreate() untuk idempotency
+                    // Meta sering mengirim webhook duplikat. firstOrCreate() mencegah
+                    // duplicate entry exception yang akan crash worker & retry 3x sia-sia.
+                    $chat = \App\Models\Chat::firstOrCreate(
+                        ['message_id_meta' => $messageData['id']],  // search key (UNIQUE)
+                        [
+                            'tenant_id'      => $tenant->id,
+                            'customer_phone' => $customerPhone,
+                            'message'        => $messageData['text']['body'],
+                            'direction'      => 'inbound',
+                        ]
+                    );
 
-                    // Broadcast ke Laravel Reverb untuk realtime frontend
-                    broadcast(new \App\Events\ChatReceived($chat))->toOthers();
+                    // Broadcast HANYA jika pesan baru (bukan duplikat dari Meta)
+                    if ($chat->wasRecentlyCreated) {
+                        broadcast(new \App\Events\ChatReceived($chat))->toOthers();
+                    }
                 }
             }
 

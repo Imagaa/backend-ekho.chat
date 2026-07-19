@@ -12,9 +12,19 @@ use App\Http\Controllers\Api\WebhookController;
 Route::post('/request-otp', [AuthController::class, 'requestOtp'])->middleware('throttle:login');
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
+// Tambah GET endpoint untuk verifikasi awal URL di Meta Developer Dashboard
 Route::middleware('throttle:webhook')->group(function () {
     Route::post('/webhook/midtrans', [MidtransController::class, 'webhook']);
     Route::post('/webhook/waba', [WebhookController::class, 'handle']);
+
+    // Cacat C Fix: GET endpoint wajib ada agar Meta bisa verifikasi URL saat pendaftaran webhook
+    Route::get('/webhook/waba', function (\Illuminate\Http\Request $request) {
+        if ($request->query('hub_mode') === 'subscribe'
+            && $request->query('hub_verify_token') === config('services.waba.verify_token')) {
+            return response($request->query('hub_challenge'), 200);
+        }
+        return response('Forbidden', 403);
+    });
 });
 
 // --- PROTECTED ROUTES (Dilindungi Token-Based API Shield) ---

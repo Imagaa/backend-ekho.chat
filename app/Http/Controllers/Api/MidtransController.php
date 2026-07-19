@@ -61,7 +61,8 @@ class MidtransController extends Controller
                 DB::transaction(function () use ($tenantId, $request) {
                     $tenant = Tenant::findOrFail($tenantId);
                     $wallet = $tenant->wallet()->lockForUpdate()->first();
-                    $wallet->balance += $request->gross_amount;
+                    // Patch 3A: explicit float cast cegah PHP type coercion bug
+                    $wallet->balance += (float) $request->gross_amount;
                     $wallet->save();
                 }, 5);
             }
