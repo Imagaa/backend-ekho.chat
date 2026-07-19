@@ -26,31 +26,23 @@ class DispatchScheduledCampaigns extends Command
             // Mencegah memory leak dengan chunking
             Contact::where('contact_group_id', $campaign->contact_group_id)
                 ->chunkById(500, function ($contacts) use ($campaign) {
-                    $logs = [];
-                    foreach ($contacts as $contact) {
-                        $logs[] = [
-                            'tenant_id' => $campaign->tenant_id,
-                            'campaign_id' => $campaign->id,
-                            'contact_id' => $contact->id,
-                            'recipient_phone' => $contact->phone,
-                            'status' => 'QUEUED',
-                            'created_at' => now(),
-                            'updated_at' => now(),
-                        ];
-                    }
                     
-                    DB::table('message_logs')->insert($logs);
+                    // Transaksi memastikan 500 query INSERT dieksekusi secepat kilat (Fraksi detik)
+                    DB::transaction(function () use ($contacts, $campaign) {
+                        foreach ($contacts as $contact) {
+                            $log = MessageLog::create([
+                                'tenant_id' => $campaign->tenant_id,
+                                'campaign_id' => $campaign->id,
+                                'contact_id' => $contact->id,
+                                'recipient_phone' => $contact->phone,
+                                'status' => 'QUEUED',
+                            ]);
+                            
+                            // Lempar antrean seketika tanpa perlu query ulang (Anti N+1)
+                            ProcessWaBlast::dispatch($log, $contact->dynamic_data ?? [])->onQueue('blast');
+                        }
+                    });
                     
-                    $insertedLogs = MessageLog::where('campaign_id', $campaign->id)
-                        ->where('status', 'QUEUED')
-                        ->whereIn('contact_id', $contacts->pluck('id'))
-                        ->get();
-
-                    foreach ($insertedLogs as $log) {
-                        $contact = $contacts->firstWhere('id', $log->contact_id);
-                        // Lempar ke redis queue blast
-                        ProcessWaBlast::dispatch($log, $contact->dynamic_data ?? [])->onQueue('blast');
-                    }
                 });
         }
     }

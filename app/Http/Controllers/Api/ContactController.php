@@ -80,6 +80,11 @@ class ContactController extends Controller
                 'status' => 'error',
                 'message' => 'Gagal memproses file: ' . $e->getMessage()
             ], 500);
+        } finally {
+            // Garbage Collection Manual: Hapus file temp OS segera agar memori lega
+            if (file_exists($file->path())) {
+                @unlink($file->path());
+            }
         }
     }
 

@@ -74,8 +74,8 @@ class ProcessWaBlast implements ShouldQueue
         $components = $campaign->template->components;
         // Logic penggantian string placeholder {{1}}, {{2}} dengan array $this->dynamicData akan disisipkan di sini nantinya.
 
-        // 5. HTTP Request ke api.co.id
-        $response = Http::withHeaders([
+        // 5. HTTP Request ke api.co.id dengan Strict Timeout
+        $response = Http::timeout(10)->withHeaders([
             'Authorization' => 'Bearer ' . $tenant->waba_api_key,
             'Content-Type' => 'application/json',
         ])->post(env('WABA_BASE_URL') . '/v1/messages', [
