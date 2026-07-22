@@ -60,26 +60,27 @@ class ProcessWaBlast implements ShouldQueue
             return;
         }
 
-        // 3. Potong Saldo dengan Pessimistic Locking
-        // Asumsi harga per template Rp 500 (Bisa dinamis tergantung kategori nanti)
-        $costPerMessage = 500; 
+                // 3. Saldo TIDAK dipotong di sini — dipotong sekali di ProcessBlastCampaign (orchestrator)
+        // Ini mencegah lockForUpdate dipanggil N kali untuk N kontak dalam satu campaign
 
-        try {
-            $tenant->wallet->deductBalance($costPerMessage);
-        } catch (\Exception $e) {
-            $this->markFailed('Saldo tidak mencukupi. Terhenti oleh sistem pengunci.');
-            return;
-        }
+        // 4. Susun Payload & Ganti Placeholder {{1}}, {{2}}, dst. dari dynamic_data kontak
+        $components = collect($campaign->template->components)->map(function ($component) {
+            if (isset($component['parameters'])) {
+                $component['parameters'] = collect($component['parameters'])
+                    ->map(function ($param) {
+                        if ($param['type'] === 'text' && isset($param['placeholder_key'])) {
+                            $param['text'] = $this->dynamicData[$param['placeholder_key']] ?? ($param['text'] ?? '');
+                            unset($param['placeholder_key']);
+                        }
+                        return $param;
+                    })->all();
+            }
+            return $component;
+        })->all();
 
-        // 4. Susun Payload & Ganti Placeholder (Contoh sederhana)
-        $components = $campaign->template->components;
-        // Logic penggantian string placeholder {{1}}, {{2}} dengan array $this->dynamicData akan disisipkan di sini nantinya.
-
-        // 5. HTTP Request ke api.co.id dengan Strict Timeout
-        $response = Http::timeout(10)->withHeaders([
-            'Authorization' => 'Bearer ' . $tenant->waba_api_key,
-            'Content-Type' => 'application/json',
-        ])->post(env('WABA_BASE_URL') . '/v1/messages', [
+        // 5. HTTP Request ke waba_endpoint milik tenant (per-tenant, bukan env global)
+        $response = Http::timeout(10)->withToken($tenant->waba_api_key) // auto-decrypt encrypted cast
+            ->post($tenant->waba_endpoint, [
             'messaging_product' => 'whatsapp',
             'to' => $this->log->recipient_phone,
             'type' => 'template',

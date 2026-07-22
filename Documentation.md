@@ -505,7 +505,7 @@ RateLimiter::for('webhook', fn(Request $req) => Limit::perMinute(60)->by($req->i
 ### Supervisor Config (Production)
 ```ini
 [program:ekho-worker]
-command=php /var/www/ekho/artisan queue:work redis --queue=webhook,default --sleep=3 --tries=3 --max-time=3600
+command=php /var/www/ekho/artisan queue:work redis --queue=webhook,blast,default --sleep=3 --tries=3 --max-time=3600
 autostart=true
 autorestart=true
 stopasecs=10
@@ -528,10 +528,13 @@ php artisan queue:flush
 
 ### Bottleneck yang Perlu Diperhatikan
 
-1. **`DashboardController`** — Query `DailyMessageStat` tidak filter `tenant_id` ⚠️
+1. **`DashboardController`** — Query `DailyMessageStat` sudah difilter per `tenant_id` ✅
    ```php
-   // HARUS ditambahkan sebelum go-live multi-tenant:
-   ->where('tenant_id', $tenant->id)
+   // Sudah diimplementasi:
+   DailyMessageStat::where('tenant_id', $tenant->id)
+       ->where('date', '>=', now()->subDays(30))
+       ->orderBy('date', 'asc')
+       ->get();
    ```
 
 2. **`Wallet::deductBalance()`** — `lockForUpdate()` bisa bottleneck jika 100+ blast paralel satu tenant. Batasi concurrency worker per tenant.
@@ -552,10 +555,10 @@ $stats = Cache::remember('dashboard_stats_' . $tenant->id, 300, fn() => ...);
 
 | Item | Prioritas | Keterangan |
 |------|-----------|------------|
-| Dashboard tidak filter per tenant | 🔴 HIGH | `DailyMessageStat` tidak ada `WHERE tenant_id` — data bocor antar tenant |
-| OTP generator pakai `rand()` | 🟡 MEDIUM | Ganti ke `random_int()` untuk CSPRNG yang lebih kuat |
-| Outbound chat belum ada endpoint | 🟡 MEDIUM | CS tidak bisa membalas chat dari dashboard |
-| Campaign blast job belum ada | 🟡 MEDIUM | Tabel `campaigns` ada tapi job blast belum diimplementasi |
+| Dashboard tidak filter per tenant | ✅ FIXED | `DailyMessageStat` sudah filter `WHERE tenant_id` — tidak ada kebocoran data antar tenant |
+| OTP generator pakai `rand()` | ✅ FIXED | Sudah diganti ke `random_int()` — CSPRNG compliant |
+| Outbound chat belum ada endpoint | ✅ FIXED | GET /chats, GET /chats/{phone}, POST /chats/{phone}/send |
 | File import tidak async | 🟡 MEDIUM | Import besar bisa timeout HTTP |
-| `waba_endpoint` per-tenant tidak dipakai | 🟢 LOW | Field ada di DB, tidak ada controller yang menggunakannya |
+| `waba_endpoint` per-tenant tidak dipakai | ✅ FIXED | Dipakai di MessageController::send() untuk routing per-tenant |
 | Tidak ada API versioning | 🟢 LOW | Pertimbangkan `/api/v1/` untuk masa depan |
+| Campaign blast job belum ada | ✅ FIXED | ProcessBlastCampaign + SendBlastMessage jobs, CampaignController dengan immediate & scheduled dispatch |

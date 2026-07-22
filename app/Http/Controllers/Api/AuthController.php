@@ -26,7 +26,7 @@ class AuthController extends Controller
         }
 
         // Generate 6-digit OTP
-        $otp = (string) rand(100000, 999999);
+        $otp = (string) random_int(100000, 999999);
 
         // Simpan ke Redis Cache selama 5 menit (300 detik) menggunakan cache store bawaan
         Cache::put('otp_login_' . $user->email, $otp, 300);

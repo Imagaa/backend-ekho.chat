@@ -7,6 +7,8 @@ use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\MidtransController;
 use App\Http\Controllers\Api\WebhookController;
+use App\Http\Controllers\Api\MessageController;
+use App\Http\Controllers\Api\CampaignController;
 
 // --- PUBLIC ROUTES (Dilindungi Webhook & Login Shield) ---
 Route::post('/request-otp', [AuthController::class, 'requestOtp'])->middleware('throttle:login');
@@ -35,4 +37,14 @@ Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
     
     Route::get('/dashboard', [DashboardController::class, 'index']);
     Route::post('/contacts/import', [ContactController::class, 'import']);
+
+    // --- CAMPAIGN ROUTES ---
+    Route::get('/campaigns',        [CampaignController::class, 'index']);
+    Route::post('/campaigns',       [CampaignController::class, 'store']);
+    Route::get('/campaigns/{campaign}', [CampaignController::class, 'show']);
+
+    // --- CHAT ROUTES ---
+    Route::get('/chats',                    [MessageController::class, 'index']);
+    Route::get('/chats/{phone}',            [MessageController::class, 'show']);
+    Route::post('/chats/{phone}/send',      [MessageController::class, 'send']);
 });
