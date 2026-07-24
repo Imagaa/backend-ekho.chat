@@ -3,124 +3,77 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Contact;
+use App\Jobs\ImportContactsJob;
 use App\Models\ContactGroup;
+use App\Models\ContactImport;
 use Illuminate\Http\Request;
-use Spatie\SimpleExcel\SimpleExcelReader;
-use Illuminate\Support\Facades\DB;
 
 class ContactController extends Controller
 {
+    /**
+     * Terima file, simpan sementara, lalu proses async lewat queue.
+     * File besar tidak lagi diproses sinkron dalam siklus HTTP (anti-timeout).
+     */
     public function import(Request $request)
     {
         // Validasi mutlak: Hanya menerima spreadsheet murni, maksimal 10MB (Anti-RCE & Cegah Memory Dump)
         $request->validate([
             'contact_group_id' => 'required|exists:contact_groups,id',
             'file' => 'required|file|mimes:xlsx,xls,csv|max:10240',
+            'retention_policy' => 'nullable|in:keep,auto,manual',
+            'retention_days' => 'required_if:retention_policy,auto|nullable|integer|min:1|max:365',
         ]);
 
         // Global scope tenant otomatis memastikan group ini milik user yang login
         $group = ContactGroup::findOrFail($request->contact_group_id);
 
         $file = $request->file('file');
-        
-        $imported = 0;
-        $skipped = 0;
+        $storedPath = $file->store('imports', 'local');
 
-        DB::beginTransaction();
-        try {
-            SimpleExcelReader::create($file->path())
-                ->getRows()
-                ->each(function(array $row) use (&$imported, &$skipped, $group) {
-                    // Cari header dinamis (case-insensitive)
-                    $phoneKey = $this->findKey($row, ['phone', 'nomor', 'no_hp', 'whatsapp']);
-                    $nameKey = $this->findKey($row, ['name', 'nama', 'pelanggan']);
+        $retentionPolicy = $request->input('retention_policy', 'manual');
+        $retentionDays = $retentionPolicy === 'auto' ? (int) $request->input('retention_days') : null;
 
-                    $phone = $phoneKey ? $row[$phoneKey] : null;
-                    $name = $nameKey ? $row[$nameKey] : null;
+        $contactImport = ContactImport::create([
+            'contact_group_id' => $group->id,
+            'user_id' => $request->user()->id,
+            'file_name' => $file->getClientOriginalName(),
+            'file_path' => $storedPath,
+            'status' => 'PENDING',
+            'retention_policy' => $retentionPolicy,
+            'retention_days' => $retentionDays,
+            'expires_at' => $retentionDays ? now()->addDays($retentionDays) : null,
+        ]);
 
-                    if (!$phone) {
-                        $skipped++;
-                        return; // Skip jika tidak ada nomor
-                    }
+        ImportContactsJob::dispatch($contactImport->id)->onQueue('default');
 
-                    $sanitizedPhone = $this->sanitizePhone($phone);
-
-                    if (!$sanitizedPhone) {
-                        $skipped++;
-                        return; // Skip jika nomor tidak valid
-                    }
-
-                    // Ambil sisa kolom sebagai variabel dinamis (untuk placeholder Meta Template)
-                    $dynamicData = collect($row)->except([$phoneKey, $nameKey])->filter()->toArray();
-
-                    Contact::create([
-                        'contact_group_id' => $group->id,
-                        'name' => $name,
-                        'phone' => $sanitizedPhone,
-                        'dynamic_data' => empty($dynamicData) ? null : $dynamicData,
-                    ]);
-
-                    $imported++;
-                });
-
-            DB::commit();
-
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Proses import selesai.',
-                'data' => [
-                    'imported' => $imported,
-                    'skipped' => $skipped
-                ]
-            ]);
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Gagal memproses file: ' . $e->getMessage()
-            ], 500);
-        } finally {
-            // Garbage Collection Manual: Hapus file temp OS segera agar memori lega
-            if (file_exists($file->path())) {
-                @unlink($file->path());
-            }
-        }
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Import sedang diproses di background.',
+            'data' => ['import_id' => $contactImport->id],
+        ], 202);
     }
 
     /**
-     * Sanitasi nomor ke format E.164 (628xxx)
+     * Status/progress import — fallback polling untuk saat frontend belum/tidak connect ke Reverb.
      */
-    private function sanitizePhone($phone)
+    public function importStatus(ContactImport $contactImport)
     {
-        // 1. Hilangkan semua karakter non-numerik (spasi, strip, plus, dll)
-        $number = preg_replace('/[^0-9]/', '', (string)$phone);
-
-        // 2. Jika diawali '08', ubah menjadi '628'
-        if (str_starts_with($number, '08')) {
-            $number = '62' . substr($number, 1);
-        }
-
-        // 3. Validasi minimal panjang standar Indonesia & berawalan 62
-        if (strlen($number) >= 10 && str_starts_with($number, '62')) {
-            return $number;
-        }
-
-        return null;
+        return response()->json([
+            'status' => 'success',
+            'data' => $contactImport,
+        ]);
     }
 
     /**
-     * Helper mencari nama kolom case-insensitive
+     * Hapus riwayat import (retention_policy: manual atau keep, dihapus atas aksi eksplisit user).
      */
-    private function findKey(array $row, array $possibleKeys)
+    public function destroyImport(ContactImport $contactImport)
     {
-        $keys = array_keys($row);
-        foreach ($keys as $key) {
-            if (in_array(strtolower(trim($key)), $possibleKeys)) {
-                return $key;
-            }
-        }
-        return null;
+        $contactImport->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Riwayat import dihapus.',
+        ]);
     }
 }

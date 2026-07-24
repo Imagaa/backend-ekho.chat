@@ -35,28 +35,30 @@ class ProcessWaBlast implements ShouldQueue
     public function handle(): void
     {
         $tenant = Tenant::find($this->log->tenant_id);
-        
-        // 1. Redis Rate Limiting (Mencegah banned Meta)
-        // Format: 'wa_blast_tenant_1', max 50 request per 1 detik
-        Redis::throttle('wa_blast_tenant_' . $tenant->id)
-            ->allow(50)->every(1)
+
+        // 1. Redis Rate Limiting — GLOBAL (bukan per-tenant), karena limit
+        // api.co.id di level 1 akun master yang dipakai SEMUA tenant sekaligus.
+        // 60 pesan/menit dari mereka ≈ 1/detik — throttle halus per detik supaya
+        // tidak bursty (hindari 60 sekaligus lalu diam 59 detik).
+        Redis::throttle('apicoid_send_rate_limit')
+            ->allow(1)->every(1)
             ->then(function () use ($tenant) {
-                
+
                 // 2. Eksekusi Blast ke API
                 $this->sendToWaba($tenant);
 
             }, function () {
-                // Jika melebihi limit, kembalikan ke queue dengan jeda 5 detik
-                $this->release(5);
+                // Jika melebihi limit, kembalikan ke queue dengan jeda 1 detik
+                $this->release(1);
             });
     }
 
     private function sendToWaba(Tenant $tenant)
     {
         $campaign = Campaign::with('template')->find($this->log->campaign_id);
-        
-        if (!$campaign || !$tenant->waba_api_key) {
-            $this->markFailed('Konfigurasi Tenant/Campaign tidak valid.');
+
+        if (!$campaign || !$tenant->waba_phone_id) {
+            $this->markFailed('Konfigurasi Tenant/Campaign tidak valid (nomor WhatsApp belum aktif).');
             return;
         }
 
@@ -78,12 +80,14 @@ class ProcessWaBlast implements ShouldQueue
             return $component;
         })->all();
 
-        // 5. HTTP Request ke waba_endpoint milik tenant (per-tenant, bukan env global)
-        $response = Http::timeout(10)->withToken($tenant->waba_api_key) // auto-decrypt encrypted cast
-            ->post($tenant->waba_endpoint, [
-            'messaging_product' => 'whatsapp',
-            'to' => $this->log->recipient_phone,
-            'type' => 'template',
+        // 5. HTTP Request ke api.co.id — 1 API key level-aplikasi, nomor
+        // pengirim dibedakan lewat whatsapp_phone_number_id milik tenant.
+        $response = Http::timeout(10)->withToken(config('services.apicoid.api_key'))
+            ->post(config('services.apicoid.base_url') . '/messages/send', [
+            'phone_number' => $this->log->recipient_phone,
+            'channel' => 'whatsapp',
+            'message_type' => 'template',
+            'whatsapp_phone_number_id' => $tenant->waba_phone_id,
             'template' => [
                 'name' => $campaign->template->name,
                 'language' => ['code' => $campaign->template->language],
@@ -91,13 +95,13 @@ class ProcessWaBlast implements ShouldQueue
             ]
         ]);
 
-        if ($response->successful()) {
+        if ($response->successful() && $response->json('success')) {
             $this->log->update([
                 'status' => 'SENT',
-                'message_id_meta' => $response->json('messages.0.id') // Tangkap ID dari Meta untuk dicocokkan dengan webhook
+                'message_id_meta' => $response->json('data.message_id'), // Dicocokkan dengan webhook masuk
             ]);
         } else {
-            // Jika api.co.id menolak (misal nomor diblokir), saldo TIDAK dikembalikan otomatis di sini. 
+            // Jika api.co.id menolak (misal nomor diblokir), saldo TIDAK dikembalikan otomatis di sini.
             // Saldo dikembalikan melalui proses rekonsiliasi atau kebijakan perusahaan Anda.
             $this->markFailed($response->body());
         }

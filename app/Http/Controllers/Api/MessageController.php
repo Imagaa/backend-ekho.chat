@@ -67,7 +67,11 @@ class MessageController extends Controller
 
     /**
      * POST /chats/{phone}/send
-     * Kirim pesan teks ke customer via WABA API, simpan ke DB sebagai outbound
+     * Kirim pesan teks ke customer via api.co.id, simpan ke DB sebagai outbound.
+     *
+     * Model reseller: 1 API key level-aplikasi (config('services.apicoid')) untuk
+     * SEMUA tenant. Nomor pengirim dibedakan lewat tenant.waba_phone_id
+     * (whatsapp_phone_number_id milik api.co.id). Lihat documentation.md §7.
      */
     public function send(Request $request, string $phone)
     {
@@ -75,25 +79,29 @@ class MessageController extends Controller
             'message' => 'required|string|max:4096',
         ]);
 
-        // Sanitasi nomor tujuan
         $phone  = preg_replace('/\D/', '', $phone);
         $tenant = Auth::user()->tenant;
 
-        // Bangun payload WABA Cloud API (Meta format)
+        if (! $tenant->waba_phone_id) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Tenant ini belum memiliki nomor WhatsApp aktif. Ajukan pendaftaran nomor terlebih dahulu.',
+            ], 422);
+        }
+
         $payload = [
-            'messaging_product' => 'whatsapp',
-            'recipient_type'    => 'individual',
-            'to'                => $phone,
-            'type'              => 'text',
-            'text'              => ['body' => $request->message],
+            'phone_number'             => $phone,
+            'channel'                  => 'whatsapp',
+            'message_type'             => 'text',
+            'content'                  => $request->message,
+            'whatsapp_phone_number_id' => $tenant->waba_phone_id,
         ];
 
-        // Kirim ke WABA endpoint milik tenant (field waba_endpoint kini terpakai — Fix #6)
-        $response = Http::withToken($tenant->waba_api_key) // auto-decrypt karena 'encrypted' cast
-            ->post($tenant->waba_endpoint, $payload);
+        $response = Http::withToken(config('services.apicoid.api_key'))
+            ->post(config('services.apicoid.base_url') . '/messages/send', $payload);
 
-        if (!$response->successful()) {
-            Log::error('WABA send failed', [
+        if (! $response->successful() || ! $response->json('success')) {
+            Log::error('api.co.id send failed', [
                 'tenant_id' => $tenant->id,
                 'phone'     => $phone,
                 'status'    => $response->status(),
@@ -101,13 +109,12 @@ class MessageController extends Controller
             ]);
             return response()->json([
                 'status'  => 'error',
-                'message' => 'Gagal mengirim pesan ke WABA API.',
+                'message' => 'Gagal mengirim pesan via api.co.id.',
                 'detail'  => $response->json('error.message', 'Unknown error'),
             ], 502);
         }
 
-        // Ambil message_id dari respons Meta
-        $metaMessageId = $response->json('messages.0.id') ?? 'local_' . Str::uuid();
+        $messageId = $response->json('data.message_id') ?? 'local_' . Str::uuid();
 
         // Simpan ke DB sebagai outbound (BelongsToTenant auto-set tenant_id)
         $chat = Chat::create([
@@ -115,7 +122,7 @@ class MessageController extends Controller
             'customer_phone'  => $phone,
             'message'         => $request->message,
             'direction'       => 'outbound',
-            'message_id_meta' => $metaMessageId,
+            'message_id_meta' => $messageId,
         ]);
 
         return response()->json([

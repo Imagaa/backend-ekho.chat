@@ -3,8 +3,10 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Auth\Events\Login;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 
 class AppServiceProvider extends ServiceProvider
@@ -20,6 +22,16 @@ class AppServiceProvider extends ServiceProvider
         \Illuminate\Database\Eloquent\Model::preventLazyLoading(! app()->isProduction());
 
         $this->configureRateLimiting();
+
+        // Catat last_login_at/ip khusus guard 'admin' — dipakai AdminUserResource.
+        Event::listen(function (Login $event) {
+            if ($event->guard === 'admin') {
+                $event->user->forceFill([
+                    'last_login_at' => now(),
+                    'last_login_ip' => request()->ip(),
+                ])->saveQuietly();
+            }
+        });
     }
 
     protected function configureRateLimiting(): void

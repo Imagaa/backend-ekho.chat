@@ -73,7 +73,8 @@ class ProcessBlastCampaign implements ShouldQueue
         ]);
 
         // --- DISPATCH SATU JOB PER KONTAK KE queue:blast DENGAN RATE LIMITING ---
-        // Redis throttle: maks 80 pesan/detik (aman di bawah limit Meta tier standard ~100/s)
+        // Throttle aktual (1 pesan/detik, GLOBAL per akun) ada di ProcessWaBlast::handle()
+        // — sesuai limit api.co.id 60 pesan/menit per akun master. Lihat documentation.md §7.
         foreach ($contacts as $contact) {
             $log = \App\Models\MessageLog::create([
                 'tenant_id'      => $campaign->tenant_id,

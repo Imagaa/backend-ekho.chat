@@ -3,7 +3,14 @@
 return [
     'paths' => ['api/*', 'sanctum/csrf-cookie'],
     'allowed_methods' => ['*'],
-    'allowed_origins' => [env('FRONTEND_URL', 'http://localhost:3000')],
+    // FRONTEND_URL: custom domain final (diisi setelah domain dibeli).
+    // 'https://*.vercel.app': wildcard bawaan Laravel — otomatis cover production default
+    // domain (project.vercel.app) & semua preview deployment (project-hash-team.vercel.app)
+    // tanpa perlu update .env tiap deploy.
+    'allowed_origins' => array_values(array_filter([
+        env('FRONTEND_URL', 'http://localhost:3000'),
+        'https://*.vercel.app',
+    ])),
     'allowed_origins_patterns' => [],
     'allowed_headers' => ['*'],
     'exposed_headers' => [],

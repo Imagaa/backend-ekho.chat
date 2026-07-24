@@ -92,7 +92,14 @@ class AuthController extends Controller
             ], 401);
         }
 
-        $user = User::where('email', $request->email)->first();
+        $user = User::with('tenant')->where('email', $request->email)->first();
+
+        // Tenant di-suspend oleh Superadmin — tolak login meski OTP valid
+        if ($user->tenant && ! $user->tenant->is_active) {
+            return response()->json([
+                'message' => 'Akun tenant Anda sedang dinonaktifkan. Hubungi tim support.'
+            ], 403);
+        }
 
         // Hapus OTP & semua state percobaan setelah berhasil (Cegah Replay Attack)
         Cache::forget('otp_login_' . $request->email);

@@ -9,7 +9,9 @@ use Illuminate\Http\Request;
 class WebhookController extends Controller
 {
     /**
-     * Endpoint publik untuk menerima DLR (Delivery Receipt) dari api.co.id
+     * Endpoint publik untuk menerima event dari api.co.id (message.received,
+     * message.sent, message.delivered, message.read, message.failed).
+     * Lihat documentation.md §7 untuk spesifikasi lengkap.
      */
     public function handle(Request $request)
     {
@@ -18,28 +20,27 @@ class WebhookController extends Controller
             return response()->json(['error' => 'Payload too large'], 413);
         }
 
-        // 1. Verifikasi HMAC-SHA256 (Standar Meta/WABA)
-        // Dapatkan signature dari header (biasanya X-Hub-Signature-256)
-        $signature = $request->header('X-Hub-Signature-256');
-        
-        if (!$signature) {
-             return response()->json(['error' => 'Signature missing'], 401);
+        // 1. Verifikasi HMAC-SHA256 — api.co.id: header X-Webhook-Signature,
+        // hex polos TANPA prefix "sha256=" (BEDA dari skema Meta native).
+        $signature = $request->header('X-Webhook-Signature');
+
+        if (! $signature) {
+            return response()->json(['error' => 'Signature missing'], 403);
         }
 
-        // Buat hash dari raw content dengan app_secret
-        $computedSignature = hash_hmac('sha256', $request->getContent(), config('services.waba.app_secret'));
+        $computedSignature = hash_hmac('sha256', $request->getContent(), config('services.apicoid.webhook_secret'));
 
-        // Gunakan hash_equals untuk keamanan timing attack
-        if (!hash_equals('sha256=' . $computedSignature, $signature)) {
-            return response()->json(['error' => 'Invalid signature'], 401);
+        // hash_equals untuk mencegah timing attack
+        if (! hash_equals($computedSignature, $signature)) {
+            return response()->json(['error' => 'Invalid signature'], 403);
         }
 
         $payload = $request->all();
 
         // 2. Lempar ke Redis secepat mungkin (Non-blocking)
-        \App\Jobs\ProcessWebhook::dispatch($payload)->onQueue('webhook');
+        ProcessWebhook::dispatch($payload)->onQueue('webhook');
 
-        // 3. Return 200 OK langsung
+        // 3. Return 200 OK langsung — api.co.id minta respons < 5 detik
         return response()->json(['status' => 'received'], 200);
     }
 }

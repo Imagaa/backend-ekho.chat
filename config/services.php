@@ -11,10 +11,12 @@ return [
         'from_address' => env('RESEND_FROM_ADDRESS', 'auth@ekho.imaga.site'),
     ],
 
-    // --- Tambahan Patch Keamanan: Meta WABA & Midtrans ---
-    'waba' => [
-        'verify_token' => env('WABA_WEBHOOK_VERIFY_TOKEN'),
-        'app_secret' => env('WABA_APP_SECRET'), // Disiapkan untuk Patch 2 (HMAC)
+    // Provider WABA: api.co.id (BSP resmi). Model reseller — 1 API key untuk
+    // SEMUA tenant, BUKAN kredensial per-tenant. Lihat documentation.md §7.
+    'apicoid' => [
+        'base_url' => env('APICOID_BASE_URL', 'https://chat.api.co.id/api/v1/public'),
+        'api_key' => env('APICOID_API_KEY'),
+        'webhook_secret' => env('APICOID_WEBHOOK_SECRET'),
     ],
 
     'midtrans' => [

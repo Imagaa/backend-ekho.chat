@@ -9,11 +9,13 @@ class Tenant extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['company_name', 'waba_api_key', 'waba_endpoint', 'waba_phone_id'];
+    // Model reseller 1-akun-master (lihat documentation.md §7) — API key & base
+    // URL api.co.id ada di config('services.apicoid'), BUKAN per-tenant.
+    // waba_phone_id = whatsapp_phone_number_id milik api.co.id (bukan raw Meta ID).
+    protected $fillable = ['company_name', 'is_active', 'waba_phone_id'];
 
-    // Fase 1: Enkripsi Kredensial Meta
     protected $casts = [
-        'waba_api_key' => 'encrypted',
+        'is_active' => 'boolean',
     ];
 
     public function users()

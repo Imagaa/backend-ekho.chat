@@ -11,7 +11,8 @@ class Template extends Model
     use HasFactory, BelongsToTenant;
 
     protected $fillable = [
-        'tenant_id', 'meta_template_id', 'name', 'category', 'language', 'components', 'status'
+        'tenant_id', 'meta_template_id', 'apicoid_template_id', 'name', 'category',
+        'language', 'components', 'status', 'rejection_reason',
     ];
 
     protected $casts = [

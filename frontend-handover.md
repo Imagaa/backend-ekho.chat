@@ -31,6 +31,13 @@ tidak perlu melakukan filtering tambahan.
 - **User/Staff:** Login via email OTP, akses dashboard, chat inbox, upload kontak
 - **Multi-tenant:** Satu backend, banyak perusahaan — setiap request otomatis terisolasi
 
+> ⚠️ **Superadmin (internal Ekho) BUKAN bagian dari aplikasi Next.js ini.**
+> Panel superadmin untuk mendaftarkan tenant/user baru, manajemen lintas
+> tenant, dan audit log dibangun **terpisah** (Filament v4, subdomain
+> `admin.ekho.imaga.site`, auth realm sendiri). Jangan bangun halaman/route
+> admin apapun di project frontend ini — di luar scope. Detail: lihat
+> `AGENTS.md §SUPERADMIN DASHBOARD` di repo backend.
+
 ---
 
 ## 2. Tech Stack Rekomendasi
@@ -105,6 +112,12 @@ NEXT_PUBLIC_REVERB_SCHEME=https
 NEXT_PUBLIC_MIDTRANS_CLIENT_KEY=     # dari dashboard Midtrans
 ```
 
+> **Deploy Vercel:** backend sudah whitelist wildcard `https://*.vercel.app` di
+> CORS — production default domain maupun preview deployment per-PR otomatis
+> bisa akses API tanpa perlu update `.env` backend tiap deploy. Saat custom
+> domain final dibeli, set `FRONTEND_URL` di backend `.env` ke domain itu
+> (tambahan, bukan pengganti wildcard vercel.app).
+
 ---
 
 ## 4. Autentikasi — Alur Lengkap
@@ -166,6 +179,11 @@ const logout = async () => {
 
 ## 5. Halaman & Fitur yang Harus Dibangun
 
+> ⚠️ **Gate onboarding wajib (Implemented, lihat §5.8).** Seluruh halaman di
+> bawah ini (5.2–5.7) hanya bisa diakses kalau `user.tenant.waba_phone_id`
+> terisi. Kalau `null`, redirect paksa ke `/onboarding` — jangan asumsikan
+> tenant baru langsung bisa lihat Dashboard/Chats/Campaign dst begitu login.
+
 ### 5.1 Login (`/login`)
 Flow: Input email → Kirim OTP → Input OTP → Masuk dashboard
 
@@ -195,42 +213,85 @@ Komponen:
 
 ### 5.3 Chat Inbox (`/chats`)
 
-Ini fitur inti — tampilan mirip WhatsApp Web.
+Ini fitur inti — tampilan mirip WhatsApp Web. Endpoint sudah lengkap:
 
-> ⚠️ **Backend belum memiliki REST endpoint untuk fetch riwayat chat.**
-> Endpoint berikut perlu diminta ke backend developer sebelum membangun halaman ini:
-> ```
-> GET  /chats                — list conversation per customer_phone
-> GET  /chats/{phone}        — riwayat pesan dengan satu customer
-> POST /chats/{phone}/reply  — kirim balasan (outbound)
-> ```
+- `GET /chats` — list conversation per customer_phone
+- `GET /chats/{phone}` — riwayat pesan dengan satu customer
+- `POST /chats/{phone}/send` — kirim balasan (outbound)
 
-Untuk sementara, implementasi minimal: terima pesan realtime via WebSocket
-(lihat Bagian 6) dan tampilkan notifikasi browser.
+Pola pakai: `GET /chats` untuk daftar percakapan (sidebar), `GET /chats/{phone}`
+saat conversation dibuka (load riwayat), `POST /chats/{phone}/send` untuk
+kirim balasan. Gabungkan dengan WebSocket (Bagian 6) untuk pesan masuk realtime
+— jangan polling `GET /chats/{phone}` berulang.
 
 ---
 
-### 5.4 Import Kontak (`/contacts/import`)
+### 5.4 Contact Groups (dropdown import & campaign)
 
-**Endpoint:** `POST /contacts/import` (multipart/form-data)
+```
+GET  /contact-groups   — list group milik tenant + jumlah kontak (contacts_count)
+POST /contact-groups   — buat group baru { name, description? }
+```
 
 ```typescript
-const importContacts = async (file: File, contactGroupId: number) => {
+interface ContactGroup {
+  id: number;
+  name: string;
+  description: string | null;
+  contacts_count: number;
+}
+
+const listContactGroups = async (): Promise<ContactGroup[]> => {
+  const res = await api.get('/contact-groups');
+  return res.data.data;
+};
+
+const createContactGroup = async (name: string, description?: string) => {
+  const res = await api.post('/contact-groups', { name, description });
+  return res.data.data; // ContactGroup baru
+};
+```
+
+**UX:** dropdown pilih group di halaman import & buat campaign, dengan opsi
+"+ Buat group baru" (modal/inline form) yang langsung `POST /contact-groups`
+lalu refresh list.
+
+---
+
+### 5.5 Import Kontak (`/contacts/import`)
+
+> ⚠️ **Kontrak berubah dari versi sebelumnya.** Import sekarang **asynchronous**
+> — response awal BUKAN hasil akhir. Progress dikirim lewat WebSocket, dengan
+> fallback polling.
+
+**Step 1 — Submit file:**
+
+```typescript
+interface ImportSubmitResponse {
+  status: 'success';
+  message: string;
+  data: { import_id: number };
+}
+
+const importContacts = async (
+  file: File,
+  contactGroupId: number,
+  retention: { policy: 'keep' | 'auto' | 'manual'; days?: number }
+) => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('contact_group_id', String(contactGroupId));
+  formData.append('retention_policy', retention.policy);
+  if (retention.policy === 'auto' && retention.days) {
+    formData.append('retention_days', String(retention.days));
+  }
 
-  const res = await api.post('/contacts/import', formData, {
+  // 202: { status: 'success', message, data: { import_id } } — proses jalan di background
+  // 422: validasi file/retention gagal
+  const res = await api.post<ImportSubmitResponse>('/contacts/import', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    onUploadProgress: (e) => {
-      const percent = Math.round((e.loaded * 100) / (e.total ?? 1));
-      setProgress(percent);
-    },
   });
-
-  // 200: { status: 'success', data: { imported: 250, skipped: 3 } }
-  // 422: validasi file gagal
-  // 500: error proses file
+  return res.data.data.import_id;
 };
 ```
 
@@ -244,17 +305,182 @@ const importContacts = async (file: File, contactGroupId: number) => {
 | Nama | `name`, `nama`, `pelanggan` |
 | Lainnya | Otomatis jadi variable template WABA |
 
+**Pilihan retensi riwayat import** (tampilkan sebagai radio/select di form upload):
+
+| Pilihan | `retention_policy` | Field tambahan |
+|---|---|---|
+| Simpan permanen | `keep` | — |
+| Hapus otomatis setelah N hari | `auto` | `retention_days` (1–365, wajib) |
+| Hapus manual (default) | `manual` | — |
+
+**Step 2 — Progress realtime (Reverb):**
+
+```typescript
+interface ImportProgressPayload {
+  id: number;
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  imported_count: number;
+  skipped_count: number;
+  error_message: string | null;
+}
+
+useEffect(() => {
+  echo.private(`tenant.${tenantId}.imports`)
+    .listen('ImportProgressUpdated', (data: ImportProgressPayload) => {
+      if (data.id !== currentImportId) return; // filter — channel ini scope tenant, bukan per-import
+      setProgress(data);
+    });
+
+  return () => echo.leave(`tenant.${tenantId}.imports`);
+}, [tenantId, currentImportId]);
+```
+
+**Step 3 — Fallback polling** (dipakai saat reload halaman di tengah proses, atau socket belum connect):
+
+```typescript
+const getImportStatus = async (importId: number): Promise<ImportProgressPayload> => {
+  const res = await api.get(`/contacts/import/${importId}`);
+  return res.data.data;
+};
+```
+
+**Step 4 — Hapus riwayat** (tombol manual, selalu tersedia terlepas dari `retention_policy`):
+
+```typescript
+const deleteImport = async (importId: number) => {
+  await api.delete(`/contacts/import/${importId}`);
+};
+```
+
 **UX:**
-- Drag-and-drop zone
-- Tampilkan nama file + ukuran setelah dipilih
-- Progress bar saat upload
-- Hasil akhir: "✅ 250 kontak berhasil, ⏭️ 3 dilewati"
+- Drag-and-drop zone + pilihan retensi sebelum submit
+- Setelah submit (202), tampilkan progress bar berbasis `imported_count + skipped_count` (total baris belum diketahui di awal — progress bersifat counter berjalan, bukan persentase pasti)
+- Update progress dari event WebSocket; polling `GET /contacts/import/{id}` hanya sebagai fallback, jangan polling terus-menerus
+- Status akhir: `COMPLETED` → "✅ {imported_count} kontak berhasil, ⏭️ {skipped_count} dilewati"; `FAILED` → tampilkan `error_message`
 
 ---
 
-### 5.5 Top-up Saldo
+### 5.6 Campaign / Blast (`/campaigns`)
+
+```
+GET  /campaigns             — list campaign milik tenant (paginated)
+POST /campaigns              — buat campaign { name, template_id, contact_group_id, scheduled_at? }
+GET  /campaigns/{id}        — detail + progress pengiriman
+```
+
+```typescript
+interface Campaign {
+  id: number;
+  name: string;
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  scheduled_at: string | null;
+  total_contacts: number;
+  total_cost: number;
+  template: { id: number; name: string; category: string };
+  group: { id: number; name: string };
+}
+
+interface CampaignDetail extends Campaign {
+  progress: {
+    sent: number;
+    delivered: number;
+    read: number;
+    failed: number;
+    queued: number;
+  };
+}
+
+const createCampaign = async (payload: {
+  name: string;
+  template_id: number;
+  contact_group_id: number;
+  scheduled_at?: string; // ISO 8601, kosongkan untuk kirim segera
+}) => {
+  // 201: campaign dibuat, dispatch ke queue:blast (segera atau delayed)
+  // 422: template belum APPROVED, group kosong, atau saldo tidak cukup — tampilkan `message`
+  const res = await api.post('/campaigns', payload);
+  return res.data.data;
+};
+```
+
+**UX:**
+- Form create: pilih template (hanya yang `status: APPROVED` — filter di frontend atau minta backend endpoint list template jika sudah tersedia), pilih contact group, opsional jadwalkan (`scheduled_at`)
+- Estimasi biaya sebelum submit: `total_contacts × harga_per_kategori` — tampilkan sebagai preview, tapi validasi saldo final tetap di backend
+- Halaman detail: progress bar dari `progress` object (sent/delivered/read/failed/queued), auto-refresh atau polling ringan selama `status: PROCESSING`
+
+**Endpoint Template (Implemented, dipakai buat dropdown di form create campaign):**
+```
+GET  /templates                    — list template tenant (filter opsional ?status=)
+POST /templates                    — buat + submit template ke Meta lewat api.co.id (1 aksi)
+GET  /templates/{id}/refresh       — tarik status approval terbaru dari api.co.id
+```
+Filter `status: 'APPROVED'` di frontend saat isi dropdown template pada form
+create campaign — template `PENDING`/`REJECTED` tidak valid dipakai blast.
+Lihat kontrak `Template`/`CreateTemplatePayload` di §8.
+
+---
+
+### 5.7 Top-up Saldo
 
 Lihat **Bagian 7** untuk detail implementasi Midtrans Snap.
+
+---
+
+### 5.8 Onboarding Wajib (`/onboarding`) — Implemented
+
+Nomor WhatsApp tenant **harus** dihubungkan ke WABA sebelum bisa pakai fitur
+apapun (chat, campaign, template, dst). Sinyal statusnya murni satu field:
+`user.tenant.waba_phone_id` — `null` berarti belum siap, non-null berarti
+sudah aktif.
+
+**Endpoint:**
+```
+GET  /onboarding/request-number   — status pengajuan terakhir tenant (atau null kalau belum pernah)
+POST /onboarding/request-number   — ajukan nomor baru { business_name, phone_number, notes? }
+```
+`POST` mengembalikan `422` kalau tenant masih punya pengajuan berstatus
+`pending`/`processing` — jangan tampilkan form pengajuan lagi selama itu,
+tampilkan status card saja (lihat kontrak `WhatsappNumberRequest` di §8).
+
+**Gate di layout dashboard (root layout area `(app)`):**
+```typescript
+// Setiap masuk area dashboard: re-fetch /me (JANGAN cuma andalkan cache
+// localStorage — Superadmin bisa isi waba_phone_id kapan saja tanpa tenant
+// re-login), lalu cek gate.
+const { data: me, isLoading } = useQuery({ queryKey: ['me'], queryFn: getMe });
+
+useEffect(() => {
+  if (me) updateUserInStore(me); // sinkronkan store + localStorage
+}, [me]);
+
+useEffect(() => {
+  if (!isLoading && me && !me.tenant.waba_phone_id) {
+    router.replace('/onboarding');
+  }
+}, [isLoading, me]);
+```
+
+**Halaman `/onboarding` sendiri** harus punya guard kebalikannya — kalau
+`waba_phone_id` sudah terisi, redirect balik ke `/dashboard` (supaya tenant
+yang sudah aktif tidak nyangkut di halaman ini setelah Superadmin selesai
+proses pengajuannya).
+
+**Komponen:**
+- Checklist syarat (statis, tidak perlu API): akun Facebook/Meta Business
+  Manager, nomor belum aktif di WhatsApp/WhatsApp Business biasa, nomor bisa
+  terima OTP, nama tampilan bisnis, dokumen legalitas (opsional)
+- Form pengajuan (`business_name`, `phone_number`, `notes?`) — sembunyikan
+  kalau ada pengajuan `pending`/`processing` aktif, tampilkan status card
+  sebagai gantinya
+- Status card 4 varian: `pending` (menunggu), `processing` (diproses),
+  `rejected` (tampilkan `rejection_reason` + form muncul lagi untuk ajukan
+  ulang), `completed` (fallback saja — normalnya sudah ke-redirect duluan)
+
+**Widget "Langkah Awal Setup" di Dashboard (opsional, skippable):** checklist
+progres 5 langkah (nomor WA [wajib, selalu selesai di titik ini] → import
+kontak → ajukan template → top-up saldo → kirim campaign pertama). 3 langkah
+tengah bisa di-skip (state disimpan localStorage), langkah terakhir selesai
+otomatis begitu campaign pertama terkirim.
 
 ---
 
@@ -434,7 +660,7 @@ interface User {
 interface Tenant {
   id: number;
   company_name: string;
-  waba_phone_id: string;
+  waba_phone_id: string | null;  // null = gate onboarding aktif, lihat §5.8
   // waba_api_key TIDAK pernah dikembalikan ke frontend
 }
 
@@ -459,15 +685,100 @@ interface DashboardResponse {
   };
 }
 
-// === IMPORT ===
+// === CONTACT GROUPS ===
 
-interface ImportResponse {
-  status: 'success' | 'error';
+interface ContactGroup {
+  id: number;
+  name: string;
+  description: string | null;
+  contacts_count: number;
+}
+
+// === IMPORT (async — lihat §5.5) ===
+
+interface ImportSubmitResponse {
+  status: 'success';
   message: string;
-  data?: {
-    imported: number;
-    skipped: number;
+  data: { import_id: number };
+}
+
+interface ImportStatusResponse {
+  status: 'success';
+  data: {
+    id: number;
+    status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+    imported_count: number;
+    skipped_count: number;
+    error_message: string | null;
+    retention_policy: 'keep' | 'auto' | 'manual';
+    retention_days: number | null;
+    expires_at: string | null;   // ISO 8601, null jika bukan retention_policy=auto
   };
+}
+
+// === TEMPLATE (lihat §5.6) ===
+
+interface Template {
+  id: number;
+  name: string;
+  category: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+  language: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  rejection_reason: string | null;
+  components: unknown;
+  created_at: string;
+}
+
+interface CreateTemplatePayload {
+  name: string;            // lowercase + underscore, mis. 'konfirmasi_pesanan'
+  category: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+  language?: string;       // default 'id'
+  body: string;            // pakai {{1}}, {{2}}, dst untuk variabel
+  variables?: Array<{ placeholder_key: string; example: string }>;
+  footer?: string;
+  header_text?: string;
+  buttons?: Array<{
+    type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER' | 'OTP';
+    text: string;
+    url?: string;
+    phone_number?: string;
+  }>;
+}
+
+// === ONBOARDING (lihat §5.8) ===
+
+interface WhatsappNumberRequest {
+  id: number;
+  tenant_id: number;
+  business_name: string;
+  phone_number: string;
+  notes: string | null;
+  status: 'pending' | 'processing' | 'completed' | 'rejected';
+  rejection_reason: string | null;
+  created_at: string;
+}
+
+interface CreateWhatsappNumberRequestPayload {
+  business_name: string;
+  phone_number: string;
+  notes?: string;
+}
+
+// === CAMPAIGN (lihat §5.6) ===
+
+interface Campaign {
+  id: number;
+  name: string;
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  scheduled_at: string | null;
+  total_contacts: number;
+  total_cost: number;
+  template: { id: number; name: string; category: string };
+  group: { id: number; name: string };
+}
+
+interface CampaignDetail extends Campaign {
+  progress: { sent: number; delivered: number; read: number; failed: number; queued: number };
 }
 
 // === TOP-UP ===
@@ -496,6 +807,14 @@ interface ChatPayload {
   message: string;
   direction: 'inbound' | 'outbound';
   created_at: string;   // ISO 8601
+}
+
+interface ImportProgressPayload {
+  id: number;
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  imported_count: number;
+  skipped_count: number;
+  error_message: string | null;
 }
 ```
 
@@ -550,5 +869,5 @@ api.interceptors.response.use(
 | Polling `/dashboard` setiap detik | Max setiap 30 detik, andalkan WebSocket |
 | Tampilkan raw stack trace dari 500 error | Filter: tampilkan hanya `message` field |
 | Subscribe ke channel tenant lain | Hanya `tenant.{user.tenant_id}.chats` |
-| Hardcode `contact_group_id` | Ambil dari API list groups (minta backend developer) |
+| Hardcode `contact_group_id` | Ambil dari `GET /contact-groups` |
 | Simpan data sensitif di `sessionStorage` | Gunakan in-memory state (Zustand/Pinia) |
